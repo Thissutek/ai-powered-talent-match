@@ -10,14 +10,14 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
+    "@langchain/openai": "^0.5.5",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.4",
     "@tailwindcss/forms": "^0.5.10",
-    "langchain": "^0.3.19",
+    "langchain": "^0.3.21",
     "next": "15.2.4",
     "openai": "^4.91.1",
-    "pdf-parse": "^1.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-dropzone": "^14.3.8"

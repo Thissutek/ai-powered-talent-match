@@ -39,116 +39,176 @@ export default function RecruitersInput({ candidateId, onReviewSubmitted }) {
     setScores(updatedScores);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  // src/components/RecruitersInput.js - Update handleSubmit function
+
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  
+  try {
     setIsSubmitting(true);
     setError(null);
+    
+    // Get current user
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      throw new Error('Authentication error. Please sign in again.');
+    }
+    
+    if (!session) {
+      throw new Error('You must be logged in to submit a review');
+    }
 
-    try {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
+    console.log('Current session user:', session.user.id);
+    
+    // For debugging - check if the human_reviewers table exists and has entries
+    const { data: reviewersCheck, error: reviewersCheckError } = await supabase
+      .from('human_reviewers')
+      .select('count');
       
-      if (!user) {
-        throw new Error('You must be logged in to submit a review');
-      }
-
-      // Get reviewer data
-      const { data: reviewerData, error: reviewerError } = await supabase
+    console.log('Reviewers check:', reviewersCheck, reviewersCheckError);
+    
+    // Simplified approach - create reviewer entry if needed
+    let reviewerId;
+    
+    // First try to get existing reviewer
+    const { data: existingReviewer, error: reviewerError } = await supabase
+      .from('human_reviewers')
+      .select('id')
+      .eq('user_id', session.user.id)
+      .single();
+    
+    if (reviewerError || !existingReviewer) {
+      console.log('No existing reviewer found, creating one');
+      
+      // Create a reviewer entry
+      const { data: newReviewer, error: createError } = await supabase
         .from('human_reviewers')
+        .insert({
+          user_id: session.user.id,
+          full_name: session.user.email.split('@')[0] || 'Recruiter', // Fallback name
+          email: session.user.email,
+          role: 'recruiter'
+        })
         .select('id')
-        .eq('user_id', user.id)
+        .single();
+        
+      if (createError) {
+        console.error('Error creating reviewer:', createError);
+        throw new Error(`Failed to create reviewer: ${createError.message}`);
+      }
+      
+      reviewerId = newReviewer.id;
+    } else {
+      reviewerId = existingReviewer.id;
+    }
+    
+    console.log('Using reviewer ID:', reviewerId);
+    
+    // Submit review
+    const { data: reviewData, error: reviewError } = await supabase
+      .from('reviews')
+      .insert({
+        candidate_id: candidateId,
+        reviewer_id: reviewerId,
+        content,
+        recommendation
+      })
+      .select()
+      .single();
+
+    if (reviewError) {
+      console.error('Review insert error:', reviewError);
+      throw new Error(`Failed to submit review: ${reviewError.message}`);
+    }
+    
+    console.log('Review submitted successfully:', reviewData);
+
+    // Submit skills assessments if any
+    const validSkills = skills.filter(skill => skill.name.trim() !== '');
+    
+    for (const skill of validSkills) {
+      // Check if skill exists
+      let { data: skillData, error: skillQueryError } = await supabase
+        .from('skills')
+        .select('id')
+        .eq('name', skill.name.toLowerCase())
         .single();
 
-      if (reviewerError) {
-        throw new Error('Reviewer profile not found');
-      }
-
-      // Submit review
-      const { error: reviewError } = await supabase
-        .from('reviews')
-        .insert({
-          candidate_id: candidateId,
-          reviewer_id: reviewerData.id,
-          content,
-          recommendation
-        });
-
-      if (reviewError) throw reviewError;
-
-      // Submit skills assessments
-      const validSkills = skills.filter(skill => skill.name.trim() !== '');
-      
-      for (const skill of validSkills) {
-        // Check if skill exists
-        let { data: skillData } = await supabase
+      if (skillQueryError) {
+        console.log('Skill not found, creating:', skill.name);
+        
+        // Create skill if it doesn't exist
+        const { data: newSkill, error: skillCreateError } = await supabase
           .from('skills')
+          .insert({ name: skill.name.toLowerCase() })
           .select('id')
-          .eq('name', skill.name.toLowerCase())
           .single();
 
-        // Create skill if it doesn't exist
-        if (!skillData) {
-          const { data: newSkill, error: skillError } = await supabase
-            .from('skills')
-            .insert({ name: skill.name.toLowerCase() })
-            .select('id')
-            .single();
-
-          if (skillError) continue;
-          skillData = newSkill;
+        if (skillCreateError) {
+          console.error('Error creating skill:', skillCreateError);
+          continue;
         }
-
-        // Add or update skill for candidate
-        const { error: skillAssocError } = await supabase
-          .from('candidate_skills')
-          .upsert({
-            candidate_id: candidateId,
-            skill_id: skillData.id,
-            proficiency: skill.proficiency,
-            source: 'human_review'
-          }, {
-            onConflict: 'candidate_id,skill_id'
-          });
-
-        if (skillAssocError) console.error('Error associating skill:', skillAssocError);
+        
+        skillData = newSkill;
       }
 
-      // Submit scores
-      const validScores = scores.filter(score => score.score > 0);
-      
-      for (const score of validScores) {
-        const { error: scoreError } = await supabase
-          .from('scores')
-          .insert({
-            candidate_id: candidateId,
-            category: score.category,
-            score: score.score,
-            notes: score.notes,
-            created_by: 'human'
-          });
+      // Add or update skill for candidate
+      const { error: skillAssocError } = await supabase
+        .from('candidate_skills')
+        .upsert({
+          candidate_id: candidateId,
+          skill_id: skillData.id,
+          proficiency: skill.proficiency,
+          source: 'human_review'
+        }, {
+          onConflict: 'candidate_id,skill_id'
+        });
 
-        if (scoreError) console.error('Error adding score:', scoreError);
+      if (skillAssocError) {
+        console.error('Error associating skill:', skillAssocError);
       }
-
-      setSuccess(true);
-      if (onReviewSubmitted) onReviewSubmitted();
-      
-      // Reset form after successful submission
-      setContent('');
-      setRecommendation('');
-      setSkills([{ name: '', proficiency: 3 }]);
-      setScores([
-        { category: 'technical_skills', score: 0, notes: '' },
-        { category: 'communication', score: 0, notes: '' },
-        { category: 'culture_fit', score: 0, notes: '' }
-      ]);
-    } catch (err) {
-      console.error('Error submitting review:', err);
-      setError(err.message);
-    } finally {
-      setIsSubmitting(false);
     }
-  };
+
+    // Submit scores
+    const validScores = scores.filter(score => score.score > 0);
+    
+    for (const score of validScores) {
+      const { error: scoreError } = await supabase
+        .from('scores')
+        .insert({
+          candidate_id: candidateId,
+          category: score.category,
+          score: score.score,
+          notes: score.notes,
+          created_by: 'human'
+        });
+
+      if (scoreError) {
+        console.error('Error adding score:', scoreError);
+      }
+    }
+
+    setSuccess(true);
+    if (onReviewSubmitted) onReviewSubmitted();
+    
+    // Reset form after successful submission
+    setContent('');
+    setRecommendation('');
+    setSkills([{ name: '', proficiency: 3 }]);
+    setScores([
+      { category: 'technical_skills', score: 0, notes: '' },
+      { category: 'communication', score: 0, notes: '' },
+      { category: 'culture_fit', score: 0, notes: '' }
+    ]);
+  } catch (err) {
+    console.error('Error submitting review:', err);
+    setError(err.message || 'An unknown error occurred');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <div className="bg-white border rounded-lg shadow-sm p-6">

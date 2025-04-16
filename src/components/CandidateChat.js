@@ -19,8 +19,25 @@ export default function CandidateChat({ candidateId, resumeData }) {
   const messagesEndRef = useRef(null);
 
   // Create chat session when component mounts
-  useEffect(() => {
-    async function createChatSession() {
+  // src/components/CandidateChat.js - Update the useEffect for session creation
+
+useEffect(() => {
+  async function createChatSession() {
+    try {
+      console.log('Creating chat session for candidate:', candidateId);
+      
+      // Check if chat_sessions table exists and is accessible
+      const { count, error: checkError } = await supabase
+        .from('chat_sessions')
+        .select('id', { count: 'exact', head: true });
+        
+      if (checkError) {
+        console.error('Error checking chat_sessions table:', checkError);
+      } else {
+        console.log('chat_sessions table accessible, records count:', count);
+      }
+      
+      // Create a new chat session
       const { data, error } = await supabase
         .from('chat_sessions')
         .insert({ candidate_id: candidateId })
@@ -29,23 +46,41 @@ export default function CandidateChat({ candidateId, resumeData }) {
 
       if (error) {
         console.error('Error creating chat session:', error);
+        console.error('Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
         return;
       }
 
+      console.log('Chat session created successfully:', data.id);
       setSessionId(data.id);
 
       // Save initial message to database
-      await supabase.from('chat_messages').insert({
-        session_id: data.id,
-        sender: 'ai',
-        content: messages[0].content
-      });
+      const { error: messageError } = await supabase
+        .from('chat_messages')
+        .insert({
+          session_id: data.id,
+          sender: 'ai',
+          content: messages[0].content
+        });
+        
+      if (messageError) {
+        console.error('Error saving initial message:', messageError);
+      } else {
+        console.log('Initial message saved successfully');
+      }
+    } catch (err) {
+      console.error('Unexpected error in createChatSession:', err);
     }
+  }
 
-    if (candidateId) {
-      createChatSession();
-    }
-  }, [candidateId, messages]);
+  if (candidateId) {
+    createChatSession();
+  }
+}, [candidateId, messages]);
 
   // Auto-scroll to the most recent message
   useEffect(() => {
